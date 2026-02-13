@@ -1,0 +1,2231 @@
+/ main.dart
+// Tam, eksiksiz ve çalışır halde olması hedeflenen dosya.
+// Bu sürüm, assets içinde bazı arka plan görselleri eksik olsa bile
+// uygulamanın derlenip çalışmasını sağlar: GameScreen init sırasında
+// assets/game_bg.jpg, game_bg1.jpg ... game_bg5.jpg dosyalarını kontrol
+// eder ve bulunan ilkini kullanır. Hiçbiri yoksa düz bir renk kullanır.
+// Ancak: build sırasında Flutter'ın asset paketi hatası vermemesi için
+// pubspec.yaml'da listelenen tüm asset isimlerinin ya var olması ya da
+// pubspec.yaml'dan çıkarılması gerekir. (Aşağıda pubspec.yaml örneği verildi.)
+
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io' show Platform;
+import 'dart:math';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:in_app_purchase/in_app_purchase.dart';
+
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  MobileAds.instance.initialize();
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, overlays: []);
+  runApp(const WordSearchApp());
+}
+
+class WordSearchApp extends StatelessWidget {
+  const WordSearchApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'WordWander Elite',
+      theme: ThemeData(
+        primarySwatch: Colors.deepPurple,
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Color(0xFF5E35B1),
+          foregroundColor: Colors.white,
+          elevation: 0,
+        ),
+      ),
+      home: const SplashScreen(),
+    );
+  }
+}
+
+class SplashScreen extends StatefulWidget {
+  const SplashScreen({super.key});
+
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    );
+    _animation = CurvedAnimation(parent: _controller, curve: Curves.easeInOut);
+    _controller.forward();
+
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const HomeScreen()),
+        );
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFF8E2DE2), Color(0xFF4A00E0)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Center(
+          child: FadeTransition(
+            opacity: _animation,
+            child: ScaleTransition(
+              scale: _animation,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 180,
+                    height: 180,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.amber.withOpacity(0.8),
+                          blurRadius: 50,
+                          spreadRadius: 20,
+                        )
+                      ],
+                    ),
+                    child: ClipOval(
+                      child: Image.asset('assets/icon/icon.png',
+                          fit: BoxFit.cover),
+                    ),
+                  ),
+                  const SizedBox(height: 50),
+                  const Text(
+                    'WordWander Elite',
+                    style: TextStyle(
+                      fontSize: 52,
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 4,
+                    ),
+                  ),
+                  const Text(
+                    'Elite Edition',
+                    style: TextStyle(
+                      fontSize: 30,
+                      color: Colors.amber,
+                      fontWeight: FontWeight.w300,
+                    ),
+                  ),
+                  const SizedBox(height: 80),
+                  const CircularProgressIndicator(
+                    color: Colors.amber,
+                    strokeWidth: 6,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  String lang = 'en';
+
+  final Map<String, Map<String, String>> translations = {
+    'en': {
+      'title': 'WordWander Elite',
+      'subtitle': 'Elite Edition',
+      'desc': 'From Easy to Hard • Hints • Global Ready',
+      'play': 'START GAME',
+      'lang': 'Language',
+      'tr': 'TR',
+      'en': 'EN',
+      'by': 'by IsmailSimsekYazilim Games',
+      'coins': 'Coins',
+      'daily_reward': 'Claim Daily Reward',
+      'premium': 'Premium',
+    },
+    'tr': {
+      'title': 'WordWander Elite',
+      'subtitle': 'Elite Sürüm',
+      'desc': 'Kolaydan Zora • Joker • Global Hazır',
+      'play': 'OYUNA BAŞLA',
+      'lang': 'Dil',
+      'tr': 'TR',
+      'en': 'EN',
+      'by': 'by IsmailSimsekYazilim Games',
+      'coins': 'Coin',
+      'daily_reward': 'Günlük Ödülü Al',
+      'premium': 'Premium',
+    },
+  };
+
+  late Map<String, String> t;
+
+  int coins = 0;
+  bool adsRemoved = false;
+
+  @override
+  void initState() {
+    super.initState();
+    t = translations[lang]!;
+    _loadCoins();
+    _checkDailyReward();
+  }
+
+  Future<void> _loadCoins() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      coins = prefs.getInt('coins') ?? 0;
+      adsRemoved = prefs.getBool('ads_removed') ?? false;
+    });
+  }
+
+  Future<void> _saveCoins() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('coins', coins);
+    await prefs.setBool('ads_removed', adsRemoved);
+  }
+
+  Future<void> _checkDailyReward() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastReward = prefs.getString('last_daily_reward');
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+
+    if (lastReward != today) {
+      // Show daily reward button or auto claim
+    }
+  }
+
+  Future<void> _claimDailyReward() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastReward = prefs.getString('last_daily_reward');
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+
+    if (lastReward != today) {
+      setState(() {
+        coins += 50;
+      });
+      await prefs.setString('last_daily_reward', today);
+      await _saveCoins();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Daily reward claimed: 50 coins!')),
+        );
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Already claimed today!')),
+        );
+      }
+    }
+  }
+
+  void _changeLanguage(String newLang) {
+    setState(() {
+      lang = newLang;
+      t = translations[lang]!;
+    });
+  }
+
+  void _navigateToPremium() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PremiumScreen(
+          lang: lang,
+          onPurchase: (addedCoins, removeAds) {
+            setState(() {
+              coins += addedCoins;
+              if (removeAds) adsRemoved = true;
+            });
+            _saveCoins();
+          },
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFF8E2DE2), Color(0xFF4A00E0)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Center(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 140,
+                  height: 140,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.amber.withOpacity(0.7),
+                        blurRadius: 50,
+                        spreadRadius: 15,
+                      )
+                    ],
+                  ),
+                  child: ClipOval(
+                    child:
+                        Image.asset('assets/icon/icon.png', fit: BoxFit.cover),
+                  ),
+                ),
+                const SizedBox(height: 50),
+                Text(
+                  t['title']!,
+                  style: const TextStyle(
+                    fontSize: 50,
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 4,
+                  ),
+                ),
+                Text(
+                  t['subtitle']!,
+                  style: const TextStyle(
+                    fontSize: 34,
+                    color: Colors.amber,
+                    fontWeight: FontWeight.w300,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  t['desc']!,
+                  style: const TextStyle(color: Colors.white70, fontSize: 18),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  '${t['coins']}: $coins',
+                  style: const TextStyle(color: Colors.white, fontSize: 22),
+                ),
+                const SizedBox(height: 20),
+                ElevatedButton(
+                  onPressed: _claimDailyReward,
+                  child: Text(t['daily_reward']!),
+                ),
+                const SizedBox(height: 20),
+                ElevatedButton(
+                  onPressed: _navigateToPremium,
+                  child: Text(t['premium']!),
+                ),
+                const SizedBox(height: 50),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 110, vertical: 30),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(50)),
+                    elevation: 30,
+                    shadowColor: Colors.amber.withOpacity(0.9),
+                  ),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => GameScreen(
+                              lang: lang,
+                              adsRemoved: adsRemoved,
+                            )),
+                  ),
+                  child: Text(
+                    t['play']!,
+                    style: const TextStyle(
+                      fontSize: 32,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 60),
+                Text(
+                  t['by']!,
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 60),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      '${t['lang']}: ',
+                      style: const TextStyle(color: Colors.white, fontSize: 22),
+                    ),
+                    ToggleButtons(
+                      isSelected: [lang == 'tr', lang == 'en'],
+                      onPressed: (i) => _changeLanguage(i == 0 ? 'tr' : 'en'),
+                      borderRadius: BorderRadius.circular(20),
+                      fillColor: Colors.amber,
+                      selectedColor: Colors.black,
+                      color: Colors.white,
+                      children: const [
+                        Padding(
+                          padding: EdgeInsets.symmetric(
+                              horizontal: 40, vertical: 16),
+                          child: Text(
+                            'TR',
+                            style: TextStyle(
+                                fontSize: 22, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        Padding(
+                          padding: EdgeInsets.symmetric(
+                              horizontal: 40, vertical: 16),
+                          child: Text(
+                            'EN',
+                            style: TextStyle(
+                                fontSize: 22, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 50),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class PremiumScreen extends StatefulWidget {
+  final String lang;
+  final Function(int, bool) onPurchase;
+
+  const PremiumScreen({
+    super.key,
+    required this.lang,
+    required this.onPurchase,
+  });
+
+  @override
+  State<PremiumScreen> createState() => _PremiumScreenState();
+}
+
+class _PremiumScreenState extends State<PremiumScreen> {
+  final InAppPurchase _inAppPurchase = InAppPurchase.instance;
+  late StreamSubscription<List<PurchaseDetails>> _subscription;
+
+  List<ProductDetails> _products = [];
+  bool _isAvailable = false;
+  bool _isLoading = true;
+
+  // LÜTFEN: Bu ID'leri kendi Google Play Console / App Store Connect ürün ID'lerinizle değiştirin.
+  static const _removeAdsIdAndroid = 'com.yourcompany.wordwander.remove_ads';
+  static const _coin250IdAndroid = 'com.yourcompany.wordwander.coin_250';
+  static const _coin750IdAndroid = 'com.yourcompany.wordwander.coin_750';
+  static const _coin1600IdAndroid = 'com.yourcompany.wordwander.coin_1600';
+  static const _coin3600IdAndroid = 'com.yourcompany.wordwander.coin_3600';
+  static const _coin8000IdAndroid = 'com.yourcompany.wordwander.coin_8000';
+
+  static const _removeAdsIdIOS = 'remove_ads';
+  static const _coin250IdIOS = 'coin_250';
+  static const _coin750IdIOS = 'coin_750';
+  static const _coin1600IdIOS = 'coin_1600';
+  static const _coin3600IdIOS = 'coin_3600';
+  static const _coin8000IdIOS = 'coin_8000';
+
+  late final Set<String> _kProductIds;
+
+  final Map<String, Map<String, dynamic>> _packageInfo = {};
+
+  @override
+  void initState() {
+    super.initState();
+
+    if (Platform.isAndroid) {
+      _kProductIds = {
+        _removeAdsIdAndroid,
+        _coin250IdAndroid,
+        _coin750IdAndroid,
+        _coin1600IdAndroid,
+        _coin3600IdAndroid,
+        _coin8000IdAndroid,
+      };
+
+      _packageInfo.addAll({
+        _coin250IdAndroid: {'coins': 250, 'bonus': 0, 'popular': false},
+        _coin750IdAndroid: {'coins': 750, 'bonus': 0, 'popular': false},
+        _coin1600IdAndroid: {'coins': 1600, 'bonus': '25%', 'popular': false},
+        _coin3600IdAndroid: {'coins': 3600, 'bonus': '45%', 'popular': true},
+        _coin8000IdAndroid: {'coins': 8000, 'bonus': '60%', 'popular': false},
+      });
+    } else {
+      _kProductIds = {
+        _removeAdsIdIOS,
+        _coin250IdIOS,
+        _coin750IdIOS,
+        _coin1600IdIOS,
+        _coin3600IdIOS,
+        _coin8000IdIOS,
+      };
+
+      _packageInfo.addAll({
+        _coin250IdIOS: {'coins': 250, 'bonus': 0, 'popular': false},
+        _coin750IdIOS: {'coins': 750, 'bonus': 0, 'popular': false},
+        _coin1600IdIOS: {'coins': 1600, 'bonus': '25%', 'popular': false},
+        _coin3600IdIOS: {'coins': 3600, 'bonus': '45%', 'popular': true},
+        _coin8000IdIOS: {'coins': 8000, 'bonus': '60%', 'popular': false},
+      });
+    }
+
+    _initInAppPurchase();
+  }
+
+  Future<void> _initInAppPurchase() async {
+    final available = await _inAppPurchase.isAvailable();
+    if (!available) {
+      setState(() {
+        _isLoading = false;
+        _isAvailable = false;
+      });
+      return;
+    }
+
+    _isAvailable = true;
+
+    _subscription = _inAppPurchase.purchaseStream.listen(
+      _handlePurchaseUpdates,
+      onDone: () {
+        try {
+          _subscription.cancel();
+        } catch (_) {}
+      },
+      onError: (error) {
+        debugPrint('Purchase stream error: $error');
+      },
+    );
+
+    final response = await _inAppPurchase.queryProductDetails(_kProductIds);
+
+    if (response.error != null) {
+      debugPrint('Product query error: ${response.error}');
+    }
+
+    setState(() {
+      _products = response.productDetails;
+      _isLoading = false;
+    });
+  }
+
+  Future<bool> _verifyPurchase(PurchaseDetails purchase) async {
+    // UYARI: Bu örnekte doğrulama TRUE dönülmektedir.
+    // Gerçek uygulamada mutlaka server-side doğrulama yapın.
+    return true;
+  }
+
+  Future<void> _deliverProduct(PurchaseDetails purchase) async {
+    int addedCoins = 0;
+    bool removeAds = false;
+
+    final pid = purchase.productID;
+    if (pid == _removeAdsIdAndroid || pid == _removeAdsIdIOS) {
+      removeAds = true;
+    } else if (_packageInfo.containsKey(pid)) {
+      addedCoins = _packageInfo[pid]?['coins'] ?? 0;
+    } else {
+      switch (pid) {
+        case _coin250IdAndroid:
+        case _coin250IdIOS:
+          addedCoins = 250;
+          break;
+        case _coin750IdAndroid:
+        case _coin750IdIOS:
+          addedCoins = 750;
+          break;
+        case _coin1600IdAndroid:
+        case _coin1600IdIOS:
+          addedCoins = 1600;
+          break;
+        case _coin3600IdAndroid:
+        case _coin3600IdIOS:
+          addedCoins = 3600;
+          break;
+        case _coin8000IdAndroid:
+        case _coin8000IdIOS:
+          addedCoins = 8000;
+          break;
+      }
+    }
+
+    if (addedCoins > 0 || removeAds) {
+      widget.onPurchase(addedCoins, removeAds);
+      final prefs = await SharedPreferences.getInstance();
+      final prevCoins = prefs.getInt('coins') ?? 0;
+      await prefs.setInt('coins', prevCoins + addedCoins);
+      if (removeAds) await prefs.setBool('ads_removed', true);
+    }
+  }
+
+  void _handlePurchaseUpdates(List<PurchaseDetails> purchases) async {
+    for (var purchase in purchases) {
+      if (purchase.status == PurchaseStatus.pending) {
+        // bekleniyor gösterilebilir
+      } else if (purchase.status == PurchaseStatus.error) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('Satın alma hatası: ${purchase.error?.message}')),
+        );
+      } else if (purchase.status == PurchaseStatus.purchased ||
+          purchase.status == PurchaseStatus.restored) {
+        final valid = await _verifyPurchase(purchase);
+        if (valid) {
+          await _deliverProduct(purchase);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content: Text('Satın alma başarılı: ${purchase.productID}')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Satın alma doğrulanamadı.')),
+          );
+        }
+      }
+
+      if (purchase.pendingCompletePurchase) {
+        try {
+          await _inAppPurchase.completePurchase(purchase);
+        } catch (e) {
+          debugPrint('completePurchase error: $e');
+        }
+      }
+    }
+  }
+
+  Future<void> _buyProduct(ProductDetails product) async {
+    final purchaseParam = PurchaseParam(productDetails: product);
+    try {
+      if (product.id == _removeAdsIdAndroid || product.id == _removeAdsIdIOS) {
+        await _inAppPurchase.buyNonConsumable(purchaseParam: purchaseParam);
+      } else {
+        // buyConsumable parametreleri paket sürümüne göre değişebilir
+        try {
+          await _inAppPurchase.buyConsumable(
+            purchaseParam: purchaseParam,
+            autoConsume: true,
+          );
+        } catch (_) {
+          await _inAppPurchase.buyConsumable(purchaseParam: purchaseParam);
+        }
+      }
+    } catch (e) {
+      debugPrint('buyProduct error: $e');
+    }
+  }
+
+  Future<void> _restorePurchases() async {
+    try {
+      await _inAppPurchase.restorePurchases();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Satın almalar geri yükleniyor...')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Geri yükleme hatası: $e')),
+      );
+    }
+  }
+
+  String _getBonusText(String productId) {
+    final info = _packageInfo[productId];
+    if (info == null || info['bonus'] == 0) return '';
+    return info['bonus'] as String;
+  }
+
+  bool _isPopular(String productId) {
+    final info = _packageInfo[productId];
+    return info?['popular'] == true;
+  }
+
+  @override
+  void dispose() {
+    try {
+      _subscription.cancel();
+    } catch (_) {}
+    super.dispose();
+  }
+
+  ProductDetails? _findProduct(String id) {
+    try {
+      return _products.firstWhere((p) => p.id == id);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text(
+          'Mağaza',
+          style: TextStyle(color: Colors.white),
+        ),
+        backgroundColor: const Color(0xFF0D47A1),
+        elevation: 0,
+        actions: [
+          IconButton(
+            tooltip: 'Restore purchases',
+            icon: const Icon(Icons.restore, color: Colors.white),
+            onPressed: _restorePurchases,
+          )
+        ],
+      ),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF1565C0), Color(0xFF0D47A1)],
+          ),
+        ),
+        child: _isLoading
+            ? const Center(
+                child: CircularProgressIndicator(color: Colors.white))
+            : !_isAvailable || _products.isEmpty
+                ? const Center(
+                    child: Text(
+                      'Mağaza şu anda kullanılamıyor.',
+                      style: TextStyle(color: Colors.white, fontSize: 18),
+                    ),
+                  )
+                : SingleChildScrollView(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      children: [
+                        // Reklam kaldırma kutusu
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 16),
+                          decoration: BoxDecoration(
+                            color: Colors.purple.withOpacity(0.25),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: Colors.purple, width: 2),
+                          ),
+                          child: Stack(
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        const Icon(
+                                          Icons.block,
+                                          color: Colors.red,
+                                          size: 32,
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Text(
+                                            widget.lang == 'tr'
+                                                ? 'Reklamsız bir oyunun keyfini çıkarın!'
+                                                : 'Enjoy an ad-free game experience!',
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 18,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 12),
+                                    ElevatedButton(
+                                      onPressed: () {
+                                        final product = _products.firstWhere(
+                                          (p) =>
+                                              p.id == _removeAdsIdAndroid ||
+                                              p.id == _removeAdsIdIOS,
+                                          orElse: () => ProductDetails(
+                                            id: '',
+                                            title: '',
+                                            description: '',
+                                            price: '',
+                                            rawPrice: 0,
+                                            currencyCode: '',
+                                          ),
+                                        );
+                                        if (product.id.isNotEmpty) {
+                                          _buyProduct(product);
+                                        } else {
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(const SnackBar(
+                                            content: Text(
+                                                'Remove Ads ürünü bulunamadı.'),
+                                          ));
+                                        }
+                                      },
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.purple,
+                                        foregroundColor: Colors.white,
+                                        minimumSize:
+                                            const Size(double.infinity, 54),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        widget.lang == 'tr'
+                                            ? 'Reklamları Kaldır'
+                                            : 'Remove Ads',
+                                        style: const TextStyle(
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Positioned(
+                                top: 8,
+                                right: 8,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 10, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.green,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    _findProduct(Platform.isAndroid
+                                                ? _removeAdsIdAndroid
+                                                : _removeAdsIdIOS)
+                                            ?.price ??
+                                        '₺...',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        // Coin paketleri
+                        ..._products
+                            .where((p) =>
+                                p.id != _removeAdsIdAndroid &&
+                                p.id != _removeAdsIdIOS)
+                            .map((product) {
+                          final bonus = _getBonusText(product.id);
+                          final isPopular = _isPopular(product.id);
+
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(
+                                      color: isPopular
+                                          ? Colors.amber
+                                          : Colors.transparent,
+                                      width: 2,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      // Coin ikonu + miktar
+                                      Container(
+                                        padding: const EdgeInsets.all(12),
+                                        decoration: BoxDecoration(
+                                          color: Colors.amber.withOpacity(0.3),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: const Icon(
+                                          Icons.monetization_on,
+                                          color: Colors.amber,
+                                          size: 36,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 16),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              '${_packageInfo[product.id]?['coins'] ?? '?'} W',
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 24,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                            if (bonus.isNotEmpty)
+                                              Text(
+                                                '$bonus Daha Fazla',
+                                                style: const TextStyle(
+                                                  color: Colors.amber,
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            const SizedBox(height: 6),
+                                            if (product.description.isNotEmpty)
+                                              Text(
+                                                product.description,
+                                                style: const TextStyle(
+                                                  color: Colors.white70,
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                      ),
+                                      // Fiyat butonu
+                                      ElevatedButton(
+                                        onPressed: () => _buyProduct(product),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Colors.green,
+                                          foregroundColor: Colors.white,
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 24,
+                                            vertical: 12,
+                                          ),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                          ),
+                                        ),
+                                        child: Text(
+                                          product.price,
+                                          style: const TextStyle(
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                if (isPopular)
+                                  Positioned(
+                                    top: -12,
+                                    left: 16,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.amber,
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: const Text(
+                                        'EN POPÜLER',
+                                        style: TextStyle(
+                                          color: Colors.black,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                      ],
+                    ),
+                  ),
+      ),
+    );
+  }
+}
+
+class GameScreen extends StatefulWidget {
+  final String lang;
+  final bool adsRemoved;
+
+  const GameScreen({super.key, required this.lang, required this.adsRemoved});
+
+  @override
+  State<GameScreen> createState() => _GameScreenState();
+}
+
+class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
+  List<List<String>> grid = [];
+  List<String> words = [];
+  List<String> foundWords = [];
+  int gridSize = 0;
+  final Random rand = Random();
+
+  int jokers = 3;
+  int tipJokers = 3;
+  int coins = 0;
+  int score = 0;
+  int seconds = 0;
+  int totalSeconds = 0;
+  int level = 1;
+  bool isPaused = false;
+
+  static const int maxSupportedLevel = 30;
+
+  final List<Color> colors = const [
+    Colors.red,
+    Colors.blue,
+    Colors.green,
+    Colors.orange,
+    Colors.purple,
+    Colors.pink,
+    Colors.cyan,
+    Colors.amber,
+    Colors.teal,
+    Colors.lime,
+  ];
+
+  List<Map<String, dynamic>> drawnPaths = [];
+  Set<String> pulsingWords = {};
+
+  Offset? dragStart;
+  Offset? dragUpdate;
+
+  late AnimationController pulseController;
+
+  late Map<String, String> t;
+
+  BannerAd? _bannerAd;
+  bool _isBannerLoaded = false;
+  InterstitialAd? _interstitialAd;
+
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  final AudioPlayer _musicPlayer = AudioPlayer();
+
+  bool _isMusicPlaying = false;
+
+  final Map<String, Map<String, String>> translations = {
+    'en': {
+      'loading': 'Loading Word List...',
+      'level': 'Level',
+      'hint': 'Hint',
+      'tip': 'Tip',
+      'paused': 'PAUSED',
+      'resume': 'RESUME',
+      'main_menu': 'MAIN MENU',
+      'next_level': 'NEXT LEVEL',
+      'level_completed': 'LEVEL COMPLETED!',
+      'time': 'Time',
+      'score': 'Score',
+      'hints_left': 'Hints Left',
+      'tips_left': 'Tips Left',
+      'coins': 'Coins',
+      'buy_coins': 'Buy Coins',
+      'error_title': 'Loading Error',
+      'error_asset':
+          'Error: Could not load word list. Check assets & pubspec.yaml.',
+      'game_completed': 'Congratulations!\nYou completed all levels!',
+      'loading_info': 'Creating game board...\nThis may take a few seconds',
+    },
+    'tr': {
+      'loading': 'Kelime Listesi Yükleniyor...',
+      'level': 'Seviye',
+      'hint': 'Joker',
+      'tip': 'İpucu',
+      'paused': 'DURAKLATILDI',
+      'resume': 'DEVAM ET',
+      'main_menu': 'ANA MENÜ',
+      'next_level': 'SONRAKİ SEVİYE',
+      'level_completed': 'SEVİYE TAMAMLANDI!',
+      'time': 'Süre',
+      'score': 'Puan',
+      'hints_left': 'Kalan Joker',
+      'tips_left': 'Kalan İpucu',
+      'coins': 'Coin',
+      'buy_coins': 'Coin Satın Al',
+      'error_title': 'Yükleme Hatası',
+      'error_asset':
+          'Hata: Kelime listesi yüklenemedi. assets & pubspec.yaml kontrol edin.',
+      'game_completed': 'Tebrikler!\nTüm seviyeleri tamamladınız!',
+      'loading_info':
+          'Oyun tahtası oluşturuluyor...\nBu birkaç saniye sürebilir',
+    },
+  };
+
+  // Burada arka plan asset seçimi için alanlar
+  String? _bgAsset; // bulunursa 'assets/game_bg.jpg' vb.
+  final List<String> _bgCandidates = const [
+    'assets/game_bg.jpg',
+    'assets/game_bg1.jpg',
+    'assets/game_bg2.jpg',
+    'assets/game_bg3.jpg',
+    'assets/game_bg4.jpg',
+    'assets/game_bg5.jpg',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    t = translations[widget.lang]!;
+
+    pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    )..repeat(reverse: true);
+
+    _loadCoins();
+    _loadSavedData();
+    if (!widget.adsRemoved) {
+      _loadBannerAd();
+      _loadInterstitialAd();
+    }
+
+    // Arka plan asset'ini kontrol et ve seç
+    _findAvailableBackgroundAsset();
+
+    _startBackgroundMusic();
+  }
+
+  Future<void> _findAvailableBackgroundAsset() async {
+    // rootBundle.load throws if asset not found; bunu try/catch ile deniyoruz
+    for (final candidate in _bgCandidates) {
+      try {
+        await rootBundle.load(candidate);
+        if (mounted) {
+          setState(() {
+            _bgAsset = candidate;
+          });
+        }
+        return;
+      } catch (e) {
+        // asset yok, diğerine geç
+      }
+    }
+    // Hiçbiri yoksa _bgAsset null kalır => fallback kullanılacak
+    if (mounted) {
+      setState(() {
+        _bgAsset = null;
+      });
+    }
+  }
+
+  Future<void> _loadCoins() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      coins = prefs.getInt('coins') ?? 0;
+    });
+  }
+
+  Future<void> _saveCoins() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('coins', coins);
+  }
+
+  void _buyJokerWithCoins() {
+    if (coins >= 50) {
+      setState(() {
+        jokers++;
+        coins -= 50;
+      });
+      _saveCoins();
+      _saveData();
+    } else {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PremiumScreen(
+            lang: widget.lang,
+            onPurchase: (added, _) {
+              setState(() {
+                coins += added;
+              });
+              _saveCoins();
+            },
+          ),
+        ),
+      );
+    }
+  }
+
+  void _buyTipJokerWithCoins() {
+    if (coins >= 50) {
+      setState(() {
+        tipJokers++;
+        coins -= 50;
+      });
+      _saveCoins();
+      _saveData();
+    } else {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PremiumScreen(
+            lang: widget.lang,
+            onPurchase: (added, _) {
+              setState(() {
+                coins += added;
+              });
+              _saveCoins();
+            },
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _startBackgroundMusic() async {
+    if (_isMusicPlaying) return;
+
+    try {
+      await _musicPlayer.setReleaseMode(ReleaseMode.loop);
+      await _musicPlayer.setVolume(0.25);
+      await _musicPlayer.play(AssetSource('background_music.mp3'));
+      _isMusicPlaying = true;
+    } catch (e) {
+      debugPrint("Music error: $e");
+    }
+  }
+
+  Future<void> _playSuccessSound() async {
+    try {
+      await _audioPlayer.play(AssetSource('click.mp3'));
+    } catch (e) {
+      debugPrint('Sound error: $e');
+    }
+  }
+
+  void _loadBannerAd() {
+    _bannerAd = BannerAd(
+      adUnitId: Platform.isAndroid
+          ? 'ca-app-pub-3940256099942544/6300978111'
+          : 'ca-app-pub-3940256099942544/2934735716',
+      size: AdSize.banner,
+      request: const AdRequest(),
+      listener: BannerAdListener(
+        onAdLoaded: (ad) => setState(() => _isBannerLoaded = true),
+        onAdFailedToLoad: (ad, err) {
+          debugPrint('Banner failed: $err');
+          ad.dispose();
+        },
+      ),
+    )..load();
+  }
+
+  void _loadInterstitialAd() {
+    InterstitialAd.load(
+      adUnitId: 'ca-app-pub-3940256099942544/1033173712',
+      request: const AdRequest(),
+      adLoadCallback: InterstitialAdLoadCallback(
+        onAdLoaded: (ad) => _interstitialAd = ad,
+        onAdFailedToLoad: (err) {
+          debugPrint('Interstitial failed: $err');
+          _interstitialAd = null;
+        },
+      ),
+    );
+  }
+
+  void _showInterstitial() {
+    if (_interstitialAd == null) return;
+
+    _interstitialAd!.fullScreenContentCallback = FullScreenContentCallback(
+      onAdDismissedFullScreenContent: (ad) {
+        ad.dispose();
+        _loadInterstitialAd();
+      },
+      onAdFailedToShowFullScreenContent: (ad, err) {
+        ad.dispose();
+        _loadInterstitialAd();
+      },
+    );
+    _interstitialAd!.show();
+    _interstitialAd = null;
+  }
+
+  Future<void> _loadSavedData() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      level = prefs.getInt('level') ?? 1;
+      score = prefs.getInt('score') ?? 0;
+      jokers = prefs.getInt('jokers') ?? 3;
+      tipJokers = prefs.getInt('tipJokers') ?? 3;
+      totalSeconds = prefs.getInt('totalSeconds') ?? 0;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadWordsAndStart());
+  }
+
+  Future<void> _saveData() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('level', level);
+    await prefs.setInt('score', score);
+    await prefs.setInt('jokers', jokers);
+    await prefs.setInt('tipJokers', tipJokers);
+    await prefs.setInt('totalSeconds', totalSeconds + seconds);
+  }
+
+  @override
+  void dispose() {
+    _audioPlayer.dispose();
+    _musicPlayer.dispose();
+    _bannerAd?.dispose();
+    _interstitialAd?.dispose();
+    pulseController.dispose();
+    _saveData();
+    super.dispose();
+  }
+
+  Future<void> _loadWordsAndStart() async {
+    final fileName = widget.lang == 'tr' ? 'words_tr.json' : 'words_en.json';
+    try {
+      final jsonString =
+          await DefaultAssetBundle.of(context).loadString('assets/$fileName');
+      final json = jsonDecode(jsonString) as Map<String, dynamic>;
+
+      final levelKey = level.toString();
+      if (!json.containsKey(levelKey) || json[levelKey] == null) {
+        _showErrorDialog('Level $level için kelime listesi bulunamadı');
+        return;
+      }
+
+      words = (json[levelKey] as List)
+          .map((e) => e.toString().trim().toUpperCase())
+          .where((e) => e.isNotEmpty)
+          .toList();
+
+      if (words.isEmpty) {
+        _showErrorDialog('Level $level kelime listesi boş!');
+        return;
+      }
+
+      words = words.toSet().toList();
+      words.sort((a, b) => b.length.compareTo(a.length));
+
+      gridSize = level <= 5
+          ? 10
+          : level <= 10
+              ? 12
+              : level <= 15
+                  ? 14
+                  : 16;
+
+      _newGame();
+    } catch (e) {
+      debugPrint('JSON load error: $e');
+      _showErrorDialog(
+          'assets/$fileName yüklenemedi! pubspec.yaml kontrol edin.');
+    }
+  }
+
+  void _showErrorDialog(String message) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title:
+            Text(t['error_title']!, style: const TextStyle(color: Colors.red)),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.popUntil(context, (r) => r.isFirst),
+            child: Text(widget.lang == 'en' ? 'Main Menu' : 'Ana Menü'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _newGame() {
+    isPaused = false;
+    foundWords.clear();
+    drawnPaths.clear();
+    pulsingWords.clear();
+    seconds = 0;
+
+    grid = List.generate(gridSize, (_) => List.filled(gridSize, ''));
+
+    final letters = widget.lang == 'tr'
+        ? 'ABCÇDEFGĞHİİJKLMNOÖPRSŞTUÜVYZ'
+        : 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+    const int maxTriesPerWord = 30000;
+
+    var placementList = List<String>.from(words);
+    placementList.sort((a, b) => b.length.compareTo(a.length));
+    placementList.shuffle(rand);
+
+    int placedCount = 0;
+
+    for (var w in placementList) {
+      bool placed = false;
+      int tries = 0;
+
+      while (!placed && tries < maxTriesPerWord) {
+        final dir = rand.nextInt(8);
+        final deltas = [
+          [0, 1],
+          [1, 0],
+          [1, 1],
+          [1, -1],
+          [0, -1],
+          [-1, 0],
+          [-1, -1],
+          [-1, 1]
+        ];
+        final d = deltas[dir];
+        final dr = d[0], dc = d[1];
+
+        final maxRow = gridSize - (w.length - 1) * dr.abs();
+        final maxCol = gridSize - (w.length - 1) * dc.abs();
+
+        if (maxRow <= 0 || maxCol <= 0) {
+          tries++;
+          continue;
+        }
+
+        final r = rand.nextInt(maxRow);
+        final c = rand.nextInt(maxCol);
+
+        if (_canPlace(w, r, c, dr, dc)) {
+          _place(w, r, c, dr, dc);
+          placed = true;
+          placedCount++;
+        }
+        tries++;
+      }
+    }
+
+    for (int i = 0; i < gridSize; i++) {
+      for (int j = 0; j < gridSize; j++) {
+        if (grid[i][j].isEmpty) {
+          grid[i][j] = letters[rand.nextInt(letters.length)];
+        }
+      }
+    }
+
+    setState(() {});
+    _startTimer();
+  }
+
+  void _startTimer() {
+    Future.doWhile(() async {
+      await Future.delayed(const Duration(seconds: 1));
+      if (!mounted || isPaused || foundWords.length >= words.length) {
+        return false;
+      }
+      setState(() {
+        seconds++;
+        totalSeconds++;
+      });
+      await _saveData();
+      return true;
+    });
+  }
+
+  String _formatTime(int s) {
+    final min = s ~/ 60;
+    final sec = s % 60;
+    return '${min.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}';
+  }
+
+  bool _canPlace(String word, int r, int c, int dr, int dc) {
+    for (int i = 0; i < word.length; i++) {
+      final nr = r + i * dr;
+      final nc = c + i * dc;
+      if (nr < 0 || nr >= gridSize || nc < 0 || nc >= gridSize) return false;
+      if (grid[nr][nc].isNotEmpty && grid[nr][nc] != word[i]) return false;
+    }
+    return true;
+  }
+
+  void _place(String word, int r, int c, int dr, int dc) {
+    for (int i = 0; i < word.length; i++) {
+      grid[r + i * dr][c + i * dc] = word[i];
+    }
+  }
+
+  void _showPauseMenu() {
+    setState(() => isPaused = true);
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF4A00E0),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(
+          t['paused']!,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: Colors.amber,
+            fontSize: 26,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                ),
+                onPressed: () {
+                  Navigator.pop(context);
+                  setState(() => isPaused = false);
+                },
+                child: Text(
+                  t['resume']!,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 15),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                ),
+                onPressed: () => Navigator.popUntil(context, (r) => r.isFirst),
+                child: Text(
+                  t['main_menu']!,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _useJoker() async {
+    if (jokers <= 0 || foundWords.length >= words.length) {
+      _buyJokerWithCoins();
+      return;
+    }
+
+    final remaining = words.where((w) => !foundWords.contains(w)).toList();
+    if (remaining.isEmpty) return;
+
+    final word = remaining[rand.nextInt(remaining.length)];
+
+    bool found = false;
+
+    for (int r = 0; r < gridSize && !found; r++) {
+      for (int c = 0; c < gridSize && !found; c++) {
+        for (int d = 0; d < 8 && !found; d++) {
+          final deltas = [
+            [0, 1],
+            [1, 0],
+            [1, 1],
+            [1, -1],
+            [0, -1],
+            [-1, 0],
+            [-1, -1],
+            [-1, 1]
+          ];
+          final dr = deltas[d][0];
+          final dc = deltas[d][1];
+
+          if (_checkDirection(word, r, c, dr, dc)) {
+            final cells = <Offset>[];
+            for (int k = 0; k < word.length; k++) {
+              cells.add(
+                  Offset((c + k * dc).toDouble(), (r + k * dr).toDouble()));
+            }
+
+            setState(() {
+              foundWords.add(word);
+              drawnPaths.add({
+                'word': word,
+                'color': colors[foundWords.length % colors.length],
+                'cells': cells,
+              });
+              pulsingWords.add(word);
+              jokers--;
+              score += 100;
+            });
+
+            await _saveData();
+            HapticFeedback.mediumImpact();
+            _playSuccessSound();
+
+            Future.delayed(const Duration(milliseconds: 1400), () {
+              if (mounted) {
+                setState(() => pulsingWords.remove(word));
+              }
+            });
+
+            found = true;
+
+            if (foundWords.length == words.length) {
+              Future.delayed(const Duration(milliseconds: 800), _showWinDialog);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  void _useTipJoker() {
+    if (tipJokers <= 0 || foundWords.length >= words.length) {
+      _buyTipJokerWithCoins();
+      return;
+    }
+
+    final remaining = words.where((w) => !foundWords.contains(w)).toList();
+    if (remaining.isEmpty) return;
+
+    final word = remaining[rand.nextInt(remaining.length)];
+    final tip = '${word[0]}...${word[word.length - 1]}';
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('İpucu: $tip')),
+    );
+
+    setState(() {
+      tipJokers--;
+    });
+    _saveData();
+  }
+
+  bool _checkDirection(String word, int r, int c, int dr, int dc) {
+    for (int i = 0; i < word.length; i++) {
+      final nr = r + i * dr;
+      final nc = c + i * dc;
+      if (nr < 0 || nr >= gridSize || nc < 0 || nc >= gridSize) return false;
+      if (grid[nr][nc] != word[i]) return false;
+    }
+    return true;
+  }
+
+  void _handlePanStart(DragStartDetails details) {
+    if (isPaused) return;
+    dragStart = details.localPosition;
+    dragUpdate = details.localPosition;
+    setState(() {});
+  }
+
+  void _handlePanUpdate(DragUpdateDetails details) {
+    if (isPaused) return;
+    dragUpdate = details.localPosition;
+    setState(() {});
+  }
+
+  void _handlePanEnd(DragEndDetails _) async {
+    if (isPaused || dragStart == null || dragUpdate == null) return;
+
+    final cellSize = (MediaQuery.of(context).size.width - 32) / gridSize;
+
+    final r1 = (dragStart!.dy / cellSize).floor();
+    final c1 = (dragStart!.dx / cellSize).floor();
+    final r2 = (dragUpdate!.dy / cellSize).floor();
+    final c2 = (dragUpdate!.dx / cellSize).floor();
+
+    if (r1 >= 0 &&
+        r1 < gridSize &&
+        c1 >= 0 &&
+        c1 < gridSize &&
+        r2 >= 0 &&
+        r2 < gridSize &&
+        c2 >= 0 &&
+        c2 < gridSize) {
+      final cells = _getCellsInLine(r1, c1, r2, c2);
+      final selected = _getWordFromCells(cells);
+
+      if (selected.isNotEmpty &&
+          words.contains(selected) &&
+          !foundWords.contains(selected)) {
+        HapticFeedback.lightImpact();
+
+        setState(() {
+          foundWords.add(selected);
+          drawnPaths.add({
+            'word': selected,
+            'color': colors[foundWords.length % colors.length],
+            'cells': cells,
+          });
+          pulsingWords.add(selected);
+          score += 150;
+        });
+
+        await _saveData();
+        _playSuccessSound();
+
+        Future.delayed(const Duration(milliseconds: 1000), () {
+          if (mounted) setState(() => pulsingWords.remove(selected));
+        });
+
+        if (foundWords.length == words.length) {
+          Future.delayed(const Duration(milliseconds: 800), _showWinDialog);
+        }
+      }
+    }
+
+    dragStart = dragUpdate = null;
+    setState(() {});
+  }
+
+  List<Offset> _getCellsInLine(int r1, int c1, int r2, int c2) {
+    final cells = <Offset>[];
+    final dr = r2 > r1 ? 1 : (r2 < r1 ? -1 : 0);
+    final dc = c2 > c1 ? 1 : (c2 < c1 ? -1 : 0);
+
+    if (dr == 0 && dc == 0) return [];
+    if (dr != 0 && dc != 0 && (r2 - r1).abs() != (c2 - c1).abs()) return [];
+
+    final steps = max((r2 - r1).abs(), (c2 - c1).abs());
+    for (int i = 0; i <= steps; i++) {
+      cells.add(Offset((c1 + i * dc).toDouble(), (r1 + i * dr).toDouble()));
+    }
+    return cells;
+  }
+
+  String _getWordFromCells(List<Offset> cells) {
+    if (cells.isEmpty) return '';
+
+    final forward = cells.map((o) => grid[o.dy.toInt()][o.dx.toInt()]).join();
+    final backward = forward.split('').reversed.join();
+
+    if (words.contains(forward)) return forward;
+    if (words.contains(backward)) return backward;
+    return '';
+  }
+
+  void _showWinDialog() async {
+    await _saveData();
+    HapticFeedback.heavyImpact();
+
+    if (level % 2 == 0) {
+      Future.delayed(const Duration(milliseconds: 1200), _showInterstitial);
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF4A00E0),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(
+          t['level_completed']!,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: Colors.amber,
+            fontSize: 26,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('${t['level']}: $level',
+                style: const TextStyle(color: Colors.white, fontSize: 18)),
+            Text('${t['time']}: ${_formatTime(seconds)}',
+                style: const TextStyle(color: Colors.white, fontSize: 18)),
+            Text('${t['score']}: $score',
+                style: const TextStyle(color: Colors.white, fontSize: 18)),
+            Text('${t['hints_left']}: $jokers',
+                style: const TextStyle(color: Colors.white, fontSize: 18)),
+            Text('${t['tips_left']}: $tipJokers',
+                style: const TextStyle(color: Colors.white, fontSize: 18)),
+          ],
+        ),
+        actionsAlignment: MainAxisAlignment.spaceEvenly,
+        actions: [
+          TextButton(
+            style: TextButton.styleFrom(
+              backgroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            onPressed: () => Navigator.popUntil(context, (r) => r.isFirst),
+            child: Text(
+              t['main_menu']!,
+              style: const TextStyle(
+                color: Colors.deepPurple,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          if (level < maxSupportedLevel)
+            TextButton(
+              style: TextButton.styleFrom(
+                backgroundColor: Colors.orange,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              onPressed: () {
+                Navigator.pop(context);
+                setState(() {
+                  level++;
+                });
+                _loadWordsAndStart();
+              },
+              child: Text(
+                t['next_level']!,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            )
+          else
+            TextButton(
+              style: TextButton.styleFrom(
+                backgroundColor: Colors.green,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              onPressed: () {
+                Navigator.pop(context);
+                showDialog(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text("Tebrikler!"),
+                    content: Text(t['game_completed']!),
+                    actions: [
+                      TextButton(
+                        onPressed: () =>
+                            Navigator.popUntil(context, (r) => r.isFirst),
+                        child: const Text("Ana Menü"),
+                      ),
+                    ],
+                  ),
+                );
+              },
+              child: const Text(
+                "Oyun Bitti!",
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (gridSize == 0) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const CircularProgressIndicator(color: Color(0xFF4A00E0)),
+              const SizedBox(height: 20),
+              Text(t['loading']!, style: const TextStyle(fontSize: 18)),
+              const SizedBox(height: 10),
+              Text(
+                t['loading_info']!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 14, color: Colors.white70),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final screenWidth = MediaQuery.of(context).size.width;
+    final availableWidth = screenWidth - 32;
+    final cellSize = availableWidth / gridSize;
+    final gridPixels = cellSize * gridSize;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          '${t['level']} $level | ${t['score']}: $score',
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        centerTitle: true,
+        actions: [
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.only(right: 8.0),
+              child: Text(
+                isPaused ? t['paused']! : _formatTime(totalSeconds + seconds),
+                style: const TextStyle(fontSize: 18, color: Colors.white),
+              ),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.pause, size: 28),
+            onPressed:
+                foundWords.length == words.length ? null : _showPauseMenu,
+          ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          // Burada arka plan: bulunan asset kullanılacak, yoksa düz renk fallback
+          Positioned.fill(
+            child: _bgAsset != null
+                ? Image.asset(_bgAsset!, fit: BoxFit.cover)
+                : Container(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Color(0xFF2BB7DA), Color(0xFF66CCFF)],
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                      ),
+                    ),
+                  ),
+          ),
+          Column(
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(8),
+                color: const Color(0xFFEDE7F6).withOpacity(0.9),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(right: 12, top: 8),
+                      child: Column(
+                        children: [
+                          ElevatedButton.icon(
+                            onPressed: (jokers > 0 &&
+                                    !isPaused &&
+                                    foundWords.length < words.length)
+                                ? _useJoker
+                                : _buyJokerWithCoins,
+                            icon: AnimatedBuilder(
+                              animation: pulseController,
+                              builder: (_, __) => Transform.scale(
+                                scale: 0.9 + 0.2 * pulseController.value,
+                                child: const Icon(Icons.auto_awesome),
+                              ),
+                            ),
+                            label: Text(
+                              '${t['hint']!} ($jokers)',
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.deepOrange,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          ElevatedButton.icon(
+                            onPressed: (tipJokers > 0 &&
+                                    !isPaused &&
+                                    foundWords.length < words.length)
+                                ? _useTipJoker
+                                : _buyTipJokerWithCoins,
+                            icon: AnimatedBuilder(
+                              animation: pulseController,
+                              builder: (_, __) => Transform.scale(
+                                scale: 0.9 + 0.2 * pulseController.value,
+                                child: const Icon(Icons.lightbulb_outline),
+                              ),
+                            ),
+                            label: Text(
+                              '${t['tip']!} ($tipJokers)',
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.deepOrange,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: words.map((w) {
+                          final found = foundWords.contains(w);
+                          return AnimatedContainer(
+                            duration: const Duration(milliseconds: 400),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: found
+                                  ? Colors.green.shade700
+                                  : Colors.deepPurple.shade700,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              w,
+                              style: TextStyle(
+                                color: Colors.white,
+                                decoration:
+                                    found ? TextDecoration.lineThrough : null,
+                                decorationColor: Colors.white,
+                                decorationThickness: 2,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Container(
+                      width: gridPixels,
+                      height: gridPixels,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.95),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.deepPurple, width: 4),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Colors.black45,
+                            blurRadius: 15,
+                            offset: Offset(0, 10),
+                          )
+                        ],
+                      ),
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onPanStart: _handlePanStart,
+                        onPanUpdate: _handlePanUpdate,
+                        onPanEnd: _handlePanEnd,
+                        child: Stack(
+                          children: [
+                            GridView.builder(
+                              physics: const NeverScrollableScrollPhysics(),
+                              gridDelegate:
+                                  SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: gridSize,
+                                childAspectRatio: 1,
+                                mainAxisSpacing: 2,
+                                crossAxisSpacing: 2,
+                              ),
+                              itemCount: gridSize * gridSize,
+                              itemBuilder: (_, index) {
+                                final r = index ~/ gridSize;
+                                final c = index % gridSize;
+
+                                final path = drawnPaths.firstWhere(
+                                  (p) => (p['cells'] as List<Offset>).any(
+                                    (o) =>
+                                        o.dx.toInt() == c && o.dy.toInt() == r,
+                                  ),
+                                  orElse: () => <String, dynamic>{},
+                                );
+
+                                final isPulsing = path.isNotEmpty &&
+                                    pulsingWords.contains(path['word']);
+
+                                Color bgColor = path.isNotEmpty
+                                    ? (path['color'] as Color).withOpacity(
+                                        isPulsing
+                                            ? pulseController.value * 0.4 + 0.5
+                                            : 0.2)
+                                    : Colors.blue.shade50;
+
+                                if (isPaused)
+                                  bgColor = bgColor.withOpacity(0.5);
+
+                                return AnimatedContainer(
+                                  duration: const Duration(milliseconds: 200),
+                                  decoration: BoxDecoration(
+                                    color: bgColor,
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      grid[r][c],
+                                      style: TextStyle(
+                                        fontSize: cellSize * 0.5,
+                                        fontWeight: FontWeight.w900,
+                                        color: path.isNotEmpty
+                                            ? Colors.black
+                                            : Colors.black87,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                            CustomPaint(
+                              painter: LinePainter(
+                                drawnPaths,
+                                cellSize,
+                                isPaused ? 0.4 : 0.9,
+                              ),
+                              size: Size(gridPixels, gridPixels),
+                            ),
+                            if (dragStart != null &&
+                                dragUpdate != null &&
+                                !isPaused)
+                              CustomPaint(
+                                painter: LinePainter(
+                                  [
+                                    {
+                                      'color': Colors.black38,
+                                      'cells': _getCellsInLine(
+                                        (dragStart!.dy / cellSize).floor(),
+                                        (dragStart!.dx / cellSize).floor(),
+                                        (dragUpdate!.dy / cellSize).floor(),
+                                        (dragUpdate!.dx / cellSize).floor(),
+                                      )
+                                    }
+                                  ],
+                                  cellSize,
+                                  0.9,
+                                ),
+                                size: Size(gridPixels, gridPixels),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (isPaused)
+            ModalBarrier(
+              color: Colors.black.withOpacity(0.4),
+              dismissible: false,
+            ),
+        ],
+      ),
+      bottomNavigationBar: _isBannerLoaded && _bannerAd != null
+          ? SizedBox(
+              width: _bannerAd!.size.width.toDouble(),
+              height: _bannerAd!.size.height.toDouble(),
+              child: AdWidget(ad: _bannerAd!),
+            )
+          : const SizedBox(height: 50),
+    );
+  }
+}
+
+class LinePainter extends CustomPainter {
+  final List<Map<String, dynamic>> paths;
+  final double cellSize;
+  final double opacity;
+
+  LinePainter(this.paths, this.cellSize, [this.opacity = 0.9]);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (var path in paths) {
+      final cells = path['cells'] as List<Offset>;
+      if (cells.length < 2) continue;
+
+      final paint = Paint()
+        ..color = (path['color'] as Color).withOpacity(opacity)
+        ..strokeWidth = cellSize * 0.4
+        ..strokeCap = StrokeCap.round
+        ..style = PaintingStyle.stroke;
+
+      final points = cells
+          .map((c) => Offset(
+                c.dx * cellSize + cellSize / 2,
+                c.dy * cellSize + cellSize / 2,
+              ))
+          .toList();
+
+      canvas.drawLine(points.first, points.last, paint);
+
+      final capPaint = Paint()
+        ..color = paint.color
+        ..style = PaintingStyle.fill;
+
+      canvas.drawCircle(points.first, cellSize * 0.22, capPaint);
+      canvas.drawCircle(points.last, cellSize * 0.22, capPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant LinePainter oldDelegate) => true;
+}
